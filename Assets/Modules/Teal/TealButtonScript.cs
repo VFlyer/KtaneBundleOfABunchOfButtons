@@ -18,20 +18,21 @@ public class TealButtonScript : MonoBehaviour
     public KMRuleSeedable RuleSeedable;
     public KMSelectable ButtonSelectable;
     public GameObject ButtonCap;
-    public MeshRenderer[] LedLights;
-    public Material[] LedMats;
-    public TextMesh _buttonText;
-    public TextMesh[] _mainText;
+    public TextMesh ButtonText;
+    public TextMesh[] MainTexts;
     public Color[] _textColors;
 
     private static readonly Dictionary<int, int[]> _ruleSeededTables = new Dictionary<int, int[]>();
 
     private static int _moduleIdCounter = 1;
-    private int _moduleId, _lastTimerSeconds, _lightIndex;
-    private readonly int[] _lightCycle = { 0, 1, 2, 3 };
-    private readonly int[] _screenTextIxs = new int[3];
+    private int _moduleId;
+    private bool _moduleSolved;
+
+    private int[] _inputs = new int[3] { 9, 9, 9 };
     private readonly int[] _solutions = new int[3];
-    private bool _moduleSolved, _buttonHeld, _checkTap, _isStriking;
+    private int _currentIx;
+    private Coroutine _strike;
+    private bool _isStriking;
 
     private void Start()
     {
@@ -55,12 +56,9 @@ public class TealButtonScript : MonoBehaviour
             : (_ruleSeededTables[rnd.Seed] = LatinSquare.Generate(rnd, 9));
         // END RULE SEED
 
-        for (int i = 0; i < _screenTextIxs.Length; i++)
-            _screenTextIxs[i] = Rnd.Range(0, 9);
-
-        var snDigits = BombInfo.GetSerialNumber().Select(ch => (ch >= '0' && ch <= '9' ? ch - '0' : ch - 'A' + 10) % 9).ToArray();
+        var snDigits = BombInfo.GetSerialNumber().Select(ch => (ch >= '0' && ch <= '9' ? ch - '0' : ch - 'A' + 1) % 9).ToArray();
         var buttonNum = Rnd.Range(0, 9);
-        _buttonText.text = buttonNum.ToString();
+        ButtonText.text = buttonNum.ToString();
 
         var snPairs = new int[6];
         for (int i = 0; i < snPairs.Length; i++)
@@ -70,11 +68,9 @@ public class TealButtonScript : MonoBehaviour
                 ((snPairs[i * 2] + (direction == TealDirection.Left ? 9 - buttonNum : direction == TealDirection.Right ? buttonNum : 0)) % 9) +
                 9 * ((snPairs[i * 2 + 1] + (direction == TealDirection.Up ? 9 - buttonNum : direction == TealDirection.Down ? buttonNum : 0)) % 9)];
         Debug.LogFormat("[The Teal Button #{0}] The number printed on the button is {1}.", _moduleId, buttonNum);
-        Debug.LogFormat("[The Teal Button #{0}] The solution is {1}.", _moduleId, _solutions.Select(ch => (char)('A' + ch)).Join(", "));
+        Debug.LogFormat("[The Teal Button #{0}] The solution is {1}.", _moduleId, _solutions.Select(ch => (char)('A' + ch)).Join(""));
 
-        SetLights();
-        SetText();
-
+        MainTexts[_currentIx].color = _textColors[3];
         ButtonSelectable.OnInteract += ButtonPress;
         ButtonSelectable.OnInteractEnded += ButtonRelease;
     }
@@ -83,28 +79,58 @@ public class TealButtonScript : MonoBehaviour
     {
         StartCoroutine(AnimateButton(0f, -0.05f));
         Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonPress, transform);
-        if (!_moduleSolved)
+        if (_moduleSolved || _isStriking)
+            return false;
+        if ((int)BombInfo.GetTime() % 10 == 0)
         {
-            _checkTap = false;
-            _buttonHeld = true;
+            bool correct = true;
+            for (int i = 0; i < 3; i++)
+            {
+                if (_solutions[i] != _inputs[i])
+                {
+                    correct = false;
+                    MainTexts[i].color = _textColors[0];
+                }
+                else
+                    MainTexts[i].color = _textColors[1];
+            }
+            if (correct)
+            {
+                if (_strike != null)
+                    StopCoroutine(_strike);
+                _moduleSolved = true;
+                Module.HandlePass();
+                Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.CorrectChime, transform);
+                Debug.LogFormat("[The Teal Button #{0}] Correctly inputted {1}. Module solved.", _moduleId, _inputs.Select(i => "ABCDEFGHI-"[i]).Join(""));
+            }
+            else
+            {
+                _isStriking = true;
+                if (_strike != null)
+                    StopCoroutine(_strike);
+                _strike = StartCoroutine(Strike());
+                Module.HandleStrike();
+                Debug.LogFormat("[The Teal Button #{0}] Incorrectly inputted {1}. Strike.", _moduleId, _inputs.Select(i => "ABCDEFGHI-"[i]).Join(""));
+            }
+        }
+        else
+        {
+            _inputs[_currentIx] = (int)BombInfo.GetTime() % 10 - 1;
+            MainTexts[_currentIx].text = "ABCDEFGHI-"[_inputs[_currentIx]].ToString();
+        }
+        _currentIx = (_currentIx + 1) % 3;
+        if (!_isStriking && !_moduleSolved)
+        {
+            for (int i = 0; i < 3; i++)
+                MainTexts[i].color = _textColors[i == _currentIx ? 3 : 2];
         }
         return false;
     }
+
     private void ButtonRelease()
     {
         StartCoroutine(AnimateButton(-0.05f, 0f));
         Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonRelease, transform);
-        if (!_moduleSolved && !_isStriking)
-        {
-            _buttonHeld = false;
-            if (_checkTap)
-                CheckAnswer();
-            else
-            {
-                SetLights();
-                ButtonTap(_lastTimerSeconds);
-            }
-        }
     }
 
     private IEnumerator AnimateButton(float a, float b)
@@ -120,155 +146,64 @@ public class TealButtonScript : MonoBehaviour
         ButtonCap.transform.localPosition = new Vector3(0f, b, 0f);
     }
 
-    private void SetLights()
-    {
-        _lightIndex++;
-        for (int i = 0; i < _lightCycle.Length; i++)
-        {
-            if (i != _lightCycle[(_lightIndex + 1) % 4])
-                LedLights[i].material = LedMats[0];
-            else
-                LedLights[i].material = LedMats[1];
-        }
-
-    }
-
-    private void Update()
-    {
-        var seconds = (int)BombInfo.GetTime() % 3;
-        if (seconds != _lastTimerSeconds)
-        {
-            _lastTimerSeconds = seconds;
-            if (!_isStriking)
-                SetTextColors(seconds);
-            if (_buttonHeld)
-                _checkTap = true;
-        }
-    }
-
-    private void SetText()
-    {
-        for (int i = 0; i < _mainText.Length; i++)
-            _mainText[i].text = ((char)('A' + _screenTextIxs[i])).ToString();
-    }
-    private void SetTextColors(int sec)
-    {
-        if (!_moduleSolved && !_isStriking)
-        {
-            for (int i = 0; i < _mainText.Length; i++)
-            {
-                if (i == sec)
-                    _mainText[i].color = _textColors[3];
-                else
-                    _mainText[i].color = _textColors[2];
-            }
-        }
-    }
-
-    private void ButtonTap(int ix)
-    {
-        _screenTextIxs[ix] = (_screenTextIxs[ix] + _lightCycle[_lightIndex % 4] + 1) % 9;
-        SetText();
-    }
-
-    private void CheckAnswer()
-    {
-        bool isSolve = true;
-        for (int i = 0; i < _screenTextIxs.Length; i++)
-            if (_solutions[i] != _screenTextIxs[i])
-                isSolve = false;
-        if (isSolve)
-        {
-            Module.HandlePass();
-            _moduleSolved = true;
-            Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.CorrectChime, transform);
-            for (int i = 0; i < _screenTextIxs.Length; i++)
-                _mainText[i].color = _textColors[1];
-            for (int i = 0; i < LedLights.Length; i++)
-                LedLights[i].material = LedMats[1];
-            Debug.LogFormat("[The Teal Button #{0}] Submitted {1}. Module solved.", _moduleId, _screenTextIxs.Select(ch => (char)('A' + ch)).Join(", "));
-        }
-        else
-            StartCoroutine(Strike());
-    }
-
     private IEnumerator Strike()
     {
-        Debug.LogFormat("[The Teal Button #{0}] Submitted {1}. Strike.", _moduleId, _screenTextIxs.Select(ch => (char)('A' + ch)).Join(", "));
-        Module.HandleStrike();
-        _isStriking = true;
-        for (int i = 0; i < _screenTextIxs.Length; i++)
-        {
-            if (_screenTextIxs[i] != _solutions[i])
-                _mainText[i].color = _textColors[0];
-            else
-                _mainText[i].color = _textColors[1];
-        }
-        yield return new WaitForSeconds(1.2f);
+        yield return new WaitForSeconds(2f);
+        for (int i = 0; i < 3; i++)
+            MainTexts[i].color = _textColors[i == _currentIx ? 3 : 2];
         _isStriking = false;
     }
 
 #pragma warning disable 414
-    private readonly string TwitchHelpMessage = @"!{0} tap 3 1 2 1 [tap button when letters in those positions are highlighted] | !{0} submit";
+    private readonly string TwitchHelpMessage = @"!{0} press 4 5 3 0 [Press the button when the last digit of the timer is 4, 5, 3 and 0.] |";
 #pragma warning restore 414
 
     public IEnumerator ProcessTwitchCommand(string command)
     {
-        if (Regex.IsMatch(command, @"^\s*(submit|hold)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-        {
-            yield return null;
-            var time = (int)BombInfo.GetTime() % 3;
-            yield return ButtonSelectable;
-            while ((int)BombInfo.GetTime() % 3 == time)
-                yield return null;
-            yield return ButtonSelectable;
-            yield return new WaitForSeconds(.1f);
-            yield break;
-        }
-
-        var m = Regex.Match(command, @"^\s*(?:tap|press|click)\s+([1-3 ]*)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var parameters = command.ToUpperInvariant().Split();
+        var m = Regex.Match(parameters[0], @"^\s*press\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         if (!m.Success)
             yield break;
-        yield return null;
-        var slotsStr = m.Groups[1].Value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-        var slots = new int[slotsStr.Length];
-        for (var i = 0; i < slotsStr.Length; i++)
-            if (!int.TryParse(slotsStr[i], out slots[i]) || slots[i] < 1 || slots[i] > 3)
-                yield break;
-
-        foreach (var slot in slots)
+        if (parameters.Length < 2)
+            yield break;
+        var list = new List<int>();
+        for (int i = 1; i < parameters.Length; i++)
         {
-            while ((int)BombInfo.GetTime() % 3 != slot - 1)
+            int val;
+            if (!int.TryParse(parameters[i], out val) || val < 0 || val > 9)
+                yield break;
+            list.Add(val);
+        }
+        yield return null;
+        for (int i = 0; i < list.Count; i++)
+        {
+            while ((int)BombInfo.GetTime() % 10 != list[i])
                 yield return null;
             ButtonSelectable.OnInteract();
+            yield return new WaitForSeconds(0.1f);
             ButtonSelectable.OnInteractEnded();
-            yield return new WaitForSeconds(.1f);
+            yield return new WaitForSeconds(0.1f);
         }
     }
 
     public IEnumerator TwitchHandleForcedSolve()
     {
-        while (!_moduleSolved)
+        for (int i = 0; i < 3; i++)
         {
-            var slot = (int)BombInfo.GetTime() % 3;
-            if (_screenTextIxs[slot] != _solutions[slot])
+            if (_inputs[_currentIx] != _solutions[_currentIx])
             {
-                ButtonSelectable.OnInteract();
-                ButtonSelectable.OnInteractEnded();
-                yield return new WaitForSeconds(.1f);
-            }
-            else
-                yield return true;
-
-            if (Enumerable.Range(0, 3).All(ix => _screenTextIxs[ix] == _solutions[ix]))
-            {
-                // All slots correct: time to submit
-                var time = (int)BombInfo.GetTime() % 3;
-                ButtonSelectable.OnInteract();
-                while ((int)BombInfo.GetTime() % 3 == time)
+                while ((int)BombInfo.GetTime() % 10 != _solutions[_currentIx] + 1)
                     yield return true;
+                ButtonSelectable.OnInteract();
+                yield return new WaitForSeconds(0.1f);
                 ButtonSelectable.OnInteractEnded();
+                yield return new WaitForSeconds(0.1f);
             }
         }
+        while ((int)BombInfo.GetTime() % 10 != 0)
+            yield return true;
+        ButtonSelectable.OnInteract();
+        yield return new WaitForSeconds(0.1f);
+        ButtonSelectable.OnInteractEnded();
     }
 }

@@ -70,6 +70,8 @@ public class BlueButtonScript : MonoBehaviour
     private int _moduleId;
     private Coroutine _pressHandler;
     private MaskMaterials _maskMaterials;
+    private int[] _tpOverrideRAB;
+    private bool _tpOverriddenRAB;
 
     enum Stage
     {
@@ -157,6 +159,8 @@ public class BlueButtonScript : MonoBehaviour
 
             case Stage.Suits:
                 _suitTapTimes[_suitTapIx] = Time.time;
+                if (_suitTapIx > 0)
+                    Debug.LogFormat(@"<The Blue Button #{0}> Interval {1} = {2}", _moduleId, "RAB"[_suitTapIx - 1], _suitTapTimes[_suitTapIx] - _suitTapTimes[_suitTapIx - 1]);
                 _suitTapIx++;
                 if (_suitTapIx == 4)
                 {
@@ -228,7 +232,22 @@ public class BlueButtonScript : MonoBehaviour
         var gap2 = _suitTapTimes[2] - _suitTapTimes[1];
         var gap3 = _suitTapTimes[3] - _suitTapTimes[2];
 
-        if (gap2 > gap1 && gap3 > gap1)
+        var aGtR = gap2 > gap1;
+        var bGtR = gap3 > gap1;
+
+        if (_tpOverrideRAB != null)
+        {
+            var oAGtR = _tpOverrideRAB[1] > _tpOverrideRAB[0];
+            var oBGtR = _tpOverrideRAB[2] > _tpOverrideRAB[0];
+            if (oAGtR != aGtR || oBGtR != bGtR)
+            {
+                _tpOverriddenRAB = true;
+                aGtR = oAGtR;
+                bGtR = oBGtR;
+            }
+        }
+
+        if (aGtR && bGtR)
         {
             // Submit
             if (_suitsCurrent.SequenceEqual(_suitsGoal))
@@ -244,7 +263,7 @@ public class BlueButtonScript : MonoBehaviour
         }
 
         // Which positions to swap: { swap, swap + 1 }
-        var swap = gap3 > gap1 ? 2 : gap2 > gap1 ? 1 : 0;
+        var swap = bGtR ? 2 : aGtR ? 1 : 0;
         var t = _suitsCurrent[swap];
         _suitsCurrent[swap] = _suitsCurrent[swap + 1];
         _suitsCurrent[swap + 1] = t;
@@ -887,6 +906,7 @@ public class BlueButtonScript : MonoBehaviour
             }
             yield return null;
 
+            _tpOverrideRAB = new[] { len1, len2, len3 };
             BlueButtonSelectable.OnInteract();
             yield return new WaitForSeconds(.1f);
             BlueButtonSelectable.OnInteractEnded();
@@ -903,6 +923,10 @@ public class BlueButtonScript : MonoBehaviour
             yield return new WaitForSeconds(.1f);
             BlueButtonSelectable.OnInteractEnded();
             yield return new WaitForSeconds(.1f);
+            if (_tpOverriddenRAB)
+                Debug.LogFormat("<The Blue Button #{0}> TP lag override applied.", _moduleId);
+            _tpOverriddenRAB = false;
+            _tpOverrideRAB = null;
             yield break;
         }
 

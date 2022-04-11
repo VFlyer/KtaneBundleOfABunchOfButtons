@@ -26,6 +26,8 @@ public class CyanButtonScript : MonoBehaviour
     private bool _moduleSolved;
     private bool _buttonVisible = true;
     private Coroutine _timer;
+    private int _timerTime = 20;
+    private bool _autoSolving;
 
     private static readonly float[] xPos = { -0.05f, 0f, 0.05f, -0.05f, 0f, 0.05f };
     private static readonly float[] zPos = { 0f, 0f, 0f, -0.05f, -0.05f, -0.05f };
@@ -91,7 +93,7 @@ public class CyanButtonScript : MonoBehaviour
     private IEnumerator StartTimer()
     {
         yield return new WaitForSeconds(1.6f);
-        for (int i = 20; i > 0; i--)
+        for (int i = _timerTime; i > 0; i--)
         {
             CyanScreenText.text = i.ToString("00");
             yield return new WaitForSeconds(1f);
@@ -238,13 +240,15 @@ public class CyanButtonScript : MonoBehaviour
 
     private KMSelectable[] ProcessTwitchCommand(string command)
     {
-        return _moduleSolved || !Regex.IsMatch(command, @"^\s*(tap|press|submit|click)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
-            ? null
-            : new[] { CyanButtonSelectable };
+        if (!_autoSolving)
+            _timerTime = 30;
+        return _moduleSolved || !Regex.IsMatch(command, @"^\s*(tap|press|submit|click)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ? null : new[] { CyanButtonSelectable };
     }
 
     public IEnumerator TwitchHandleForcedSolve()
     {
+        _autoSolving = true;
+        _timerTime = 3;
         while (!_moduleSolved && _correctPresses.Skip(_currentStage).Any(b => b))
         {
             if (_correctPresses[_currentStage])
@@ -258,7 +262,6 @@ public class CyanButtonScript : MonoBehaviour
             }
             yield return null;
         }
-
         while (!_moduleSolved)
             yield return true;
     }

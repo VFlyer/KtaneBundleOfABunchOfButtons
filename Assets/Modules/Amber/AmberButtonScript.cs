@@ -20,7 +20,7 @@ public class AmberButtonScript : MonoBehaviour
     private int _toCycle = 4;
     private string _serialNumber, _input;
     private readonly bool[] _done = new bool[2];
-    private bool _moduleSolved, _buttonHeld, _checkHold, _rotated, _isRotating, _typing, _stageAnimating;
+    private bool _moduleSolved, _buttonHeld, _checkHold, _rotated, _isRotating, _typing;
 
     private string ToBinary(char y)
     {
@@ -51,7 +51,7 @@ public class AmberButtonScript : MonoBehaviour
     private void Update()
     {
         var seconds = (int) BombInfo.GetTime() % 10;
-        if (seconds != _lastTimerSeconds && !_moduleSolved && !_stageAnimating)
+        if (seconds != _lastTimerSeconds && !_moduleSolved)
         {
             _lastTimerSeconds = seconds;
             _current = (_current + 1) % _toCycle;

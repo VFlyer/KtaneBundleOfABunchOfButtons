@@ -20,7 +20,6 @@ ExportedObj/
 *.svd
 *.mdb
 
-
 # Unity3D generated meta files
 *.pidb.meta
 
@@ -35,3 +34,4 @@ Lib/.vs/
 Lib/bin/
 Lib/obj/
 Lib/packages/
+!Lib/*.sln

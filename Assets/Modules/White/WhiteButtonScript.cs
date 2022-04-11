@@ -14,74 +14,63 @@ public class WhiteButtonScript : MonoBehaviour
     public KMBombInfo BombInfo;
     public KMAudio Audio;
     public KMSelectable WhiteButtonSelectable;
-    public GameObject WhiteButtonCap, ColorblindScreen;
-    public TextMesh ColorblindText;
-    public MeshRenderer[] ColorSegments, ColorBlobs, LeftLeds, RightLeds;
-    public Material[] OnColors, OffColors;
-    public Material OnLight, OffLight;
+    public GameObject WhiteButtonCap;
+    public TextMesh[] ColorTexts;
+    public TextMesh[] ValueTexts;
+    public GameObject[] BlobObjs;
 
-    private static int _moduleIdCounter = 1;
     private int _moduleId;
+    private static int _moduleIdCounter = 1;
     private bool _moduleSolved;
 
-    private bool _buttonHeld;
-    private bool _longPress;
-    private int _lastTimerSeconds;
-    private readonly int[] _blobColors = new int[5];
-    private readonly int[] _targetBlobColors = new int[5];
-    private int _currentColor;
-    private int _currentBlob;
-    private bool _isAdding, _isStriking;
     private readonly string[] COLORNAMES = { "Iridium", "East Bay", "Cerulean", "Laurel", "Celadon", "Seaport", "Apple", "Emerald", "Pelorous", "Lotus", "Plum", "Orchid", "Sycamore", "Battleship", "Cove", "Atlantis", "Pistachio", "Neptune", "Mahogany", "Mulberry", "Amethyst", "Sienna", "Puce", "Viola", "Turmeric", "Pine", "Silver" };
     private readonly string[] CBNAMES = { "Irid", "East", "Ceru", "Laur", "Cela", "Seap", "Apple", "Emer", "Pelo", "Lotus", "Plum", "Orch", "Syca", "Batt", "Cove", "Atla", "Pist", "Nept", "Mahog", "Mulb", "Ameth", "Sien", "Puce", "Viola", "Turm", "Pine", "Silv" };
-    private readonly string[] POSITIONS = { "first", "second", "third", "fourth", "fifth" };
+
+    private Coroutine _timerTickCheck;
+    private int _holdCount;
+    private int? _initialHold = null;
+    private List<int> _input = new List<int>();
+    private int[] _solution = new int[3];
+    private int[] _colorBlobs = new int[2];
+    private int[][] _colorValues = new int[2][] { new int[3], new int[3] };
+    private bool _isAnimating;
+    private bool _ignored;
 
     private void Start()
     {
         _moduleId = _moduleIdCounter++;
-
         WhiteButtonSelectable.OnInteract += WhiteButtonPress;
         WhiteButtonSelectable.OnInteractEnded += WhiteButtonRelease;
+        _colorBlobs = Enumerable.Range(0, 26).ToArray().Shuffle().Take(2).ToArray();
 
-        var snDigits = BombInfo.GetSerialNumber().Select(ch => (ch >= '0' && ch <= '9' ? ch - '0' : ch - 'A' + 1)).ToArray();
-        for (int i = 0; i < _targetBlobColors.Length; i++)
+        for (int i = 0; i < 2; i++)
         {
-            if (i == 4)
-            {
-                _targetBlobColors[i] = snDigits[2] + snDigits[5];
-                continue;
-            }
-            if (i > 1)
-            {
-                _targetBlobColors[i] = snDigits[i + 1];
-                continue;
-            }
-            _targetBlobColors[i] = snDigits[i];
-        }
-        for (int i = 0; i < 5; i++)
-        {
-            _blobColors[i] = Rnd.Range(0, 26);
+            _colorValues[i][0] = _colorBlobs[i] / 9;
+            _colorValues[i][1] = _colorBlobs[i] % 9 / 3;
+            _colorValues[i][2] = _colorBlobs[i] % 3;
             var color = new Color(
-                (60 + 70 * ((float)(_blobColors[i] / 9))) / 255,
-                (60 + 70 * ((float)(_blobColors[i] % 9) / 3)) / 255,
-                (60 + 70 * ((float)(_blobColors[i] % 3))) / 255);
-            ColorBlobs[i].material.color = color;
-            Debug.LogFormat("[The White Button #{0}] The {1} determined number is {2}. Converting this to base-3 yields {3}{4}{5}, giving you color {6}",
-                _moduleId, POSITIONS[i], _targetBlobColors[i],
-                _targetBlobColors[i] / 9, _targetBlobColors[i] % 9 / 3, _targetBlobColors[i] % 3,
-                COLORNAMES[_targetBlobColors[i]]);
+                ((60 + 70 * ((float)_colorValues[i][0])) / 255),
+                ((60 + 70 * ((float)_colorValues[i][1])) / 255),
+                ((60 + 70 * ((float)_colorValues[i][2])) / 255)
+                );
+            BlobObjs[i].GetComponent<MeshRenderer>().material.color = color;
+            ColorTexts[i].text = CBNAMES[_colorBlobs[i]];
         }
+
+        _solution[0] = _colorValues[0][0] == _colorValues[1][0] ? 1 : (_colorValues[0][0] == _colorValues[1][0] + 1) || (_colorValues[0][0] + 2 == _colorValues[1][0]) ? 0 : 2;
+        _solution[1] = _colorValues[0][1] == _colorValues[1][1] ? 1 : (_colorValues[0][1] == _colorValues[1][1] + 1) || (_colorValues[0][1] + 2 == _colorValues[1][1]) ? 0 : 2;
+        _solution[2] = _colorValues[0][2] == _colorValues[1][2] ? 1 : (_colorValues[0][2] == _colorValues[1][2] + 1) || (_colorValues[0][2] + 2 == _colorValues[1][2]) ? 0 : 2;
+        Debug.LogFormat("[The White Button #{0}] The two colors are {1} and {2}. The solution is {3}.", _moduleId, COLORNAMES[_colorBlobs[0]], COLORNAMES[_colorBlobs[1]], _solution.Select(i => i == 0 ? "-" : i == 1 ? "0" : "+").Join(""));
     }
 
     private bool WhiteButtonPress()
     {
         StartCoroutine(AnimateButton(0f, -0.05f));
         Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonPress, transform);
-        if (!_moduleSolved)
-        {
-            _longPress = false;
-            _buttonHeld = true;
-        }
+        if (_moduleSolved)
+            return false;
+        _ignored = false;
+        _timerTickCheck = StartCoroutine(TimerTickCheck());
         return false;
     }
 
@@ -89,23 +78,37 @@ public class WhiteButtonScript : MonoBehaviour
     {
         StartCoroutine(AnimateButton(-0.05f, 0f));
         Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.BigButtonRelease, transform);
-        if (!_moduleSolved)
+        if (_moduleSolved || _isAnimating)
+            return;
+        if (_timerTickCheck != null)
+            StopCoroutine(_timerTickCheck);
+        if (_holdCount >= 4)
         {
-            _buttonHeld = false;
-            if (!_longPress)
+            Debug.LogFormat("[The White Button #{0}] Held the button for at least 4 timer ticks. Issuing a reset.", _moduleId);
+            _isAnimating = true;
+            StartCoroutine(Reset());
+            return;
+        }
+        if (_initialHold == null)
+        {
+            if (_holdCount == 0)
             {
-                AdjustColor((_currentColor + 2) % 3, _currentBlob, _isAdding);
+                Debug.LogFormat("[The White Button #{0}] The first input was a zero. Ignoring.", _moduleId);
+                _ignored = true;
+                return;
             }
-            else
-            {
-                bool correct = true;
-                for (int i = 0; i < _blobColors.Length; i++)
-                {
-                    if (_blobColors[i] != _targetBlobColors[i])
-                        correct = false;
-                }
-                StartCoroutine(CheckLogic(correct));
-            }
+            _initialHold = _holdCount;
+            ValueTexts[0].text = _initialHold.ToString();
+            return;
+        }
+        int diff = _holdCount == _initialHold ? 1 : _holdCount < _initialHold ? 0 : 2;
+        _input.Add(diff);
+        ValueTexts[_input.Count].text = "-0+"[diff].ToString();
+        Debug.LogFormat("[The White Button #{0}] Held the button over {1} timer tick{2}.", _moduleId, _holdCount, _holdCount == 1 ? "" : "s");
+        if (_input.Count == 3)
+        {
+            _isAnimating = true;
+            StartCoroutine(CheckAnswer());
         }
     }
 
@@ -122,188 +125,149 @@ public class WhiteButtonScript : MonoBehaviour
         WhiteButtonCap.transform.localPosition = new Vector3(0f, b, 0f);
     }
 
-    private void Update()
+    private IEnumerator TimerTickCheck()
     {
-        var seconds = (int)BombInfo.GetTime() % 30;
-        if (seconds != _lastTimerSeconds)
+        _holdCount = 0;
+        while (true)
         {
-            _lastTimerSeconds = seconds;
-            if (_buttonHeld)
-                _longPress = true;
+            int time = (int)BombInfo.GetTime() % 10;
+            while (time == (int)BombInfo.GetTime() % 10)
+                yield return null;
+            _holdCount++;
         }
-        if (!_moduleSolved)
-        {
-            for (int i = 0; i < 3; i++)
-                ColorSegments[i].material = i == (seconds % 3) ? OnColors[i] : OffColors[i];
-
-            if (!_isStriking)
-            {
-                for (int i = 0; i < 5; i++)
-                {
-                    LeftLeds[i].material = i == (seconds % 5) ? OnLight : OffLight;
-                    RightLeds[i].material = i == (seconds % 5) ? OnLight : OffLight;
-                }
-                _currentColor = seconds % 3;
-                _currentBlob = 4 - ((seconds + 4) % 5);
-                _isAdding = seconds % 2 == 0;
-                ColorblindText.text = CBNAMES[_blobColors[_currentBlob]];
-            }
-        }
-        else
-            ColorblindText.text = "";
-
     }
 
-    private void AdjustColor(int channel, int blob, bool add)
+    private IEnumerator Reset()
     {
-        var r = _blobColors[blob] / 9;
-        var g = _blobColors[blob] % 9 / 3;
-        var b = _blobColors[blob] % 3;
-        var offset = add ? 1 : -1;
-        if (channel == 2)
-            r = (r + offset + 3) % 3;
-        if (channel == 1)
-            g = (g + offset + 3) % 3;
-        if (channel == 0)
-            b = (b + offset + 3) % 3;
-        _blobColors[blob] = r * 9 + g * 3 + b;
-        ColorBlobs[blob].material.color = new Color(
-            (60 + 70 * ((float)r)) / 255,
-            (60 + 70 * ((float)g)) / 255,
-            (60 + 70 * ((float)b)) / 255);
+        _initialHold = null;
+        _holdCount = 0;
+        _input = new List<int>();
+        for (int i = 3; i >= 0; i--)
+        {
+            ValueTexts[i].text = "";
+            yield return new WaitForSeconds(0.15f);
+        }
+        _isAnimating = false;
     }
 
-    private IEnumerator CheckLogic(bool c)
+    private IEnumerator CheckAnswer()
     {
-        if (_moduleSolved)
-            yield break;
-        if (c)
+        bool correct = true;
+        for (int i = 0; i < _input.Count; i++)
         {
-            Module.HandlePass();
+            if (_input[i] != _solution[i])
+                correct = false;
+        }
+        if (correct)
+        {
             _moduleSolved = true;
-            for (int i = 0; i < 5; i++)
-            {
-                LeftLeds[i].material = OnColors[2];
-                RightLeds[i].material = OnColors[2];
-                if (i < 3)
-                    ColorSegments[i].material = OnColors[i];
-            }
-            Debug.LogFormat("[The White Button #{0}] You submitted {1}, {2}, {3}, {4}, {5}. Module solved.", _moduleId,
-                _blobColors[0], _blobColors[1], _blobColors[2], _blobColors[3], _blobColors[4]);
+            Module.HandlePass();
+            Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.CorrectChime, transform);
+            Debug.LogFormat("[The White Button #{0}] Correctly submitted {1}. Module solved.", _moduleId, _input.Select(i => i == 0 ? "-" : i == 1 ? "0" : "+").Join(""));
         }
         else
         {
             Module.HandleStrike();
-            for (int i = 0; i < 5; i++)
+            Debug.LogFormat("[The White Button #{0}] Incorrectly submitted {1}. Strike.", _moduleId, _input.Select(i => i == 0 ? "-" : i == 1 ? "0" : "+").Join(""));
+            _input = new List<int>();
+            _initialHold = null;
+            yield return new WaitForSeconds(1f);
+            for (int i = 3; i >= 0; i--)
             {
-                if (_blobColors[i] != _targetBlobColors[i])
-                {
-                    LeftLeds[4 - (i + 4) % 5].material = OnColors[0];
-                    RightLeds[4 - (i + 4) % 5].material = OnColors[0];
-                    Debug.LogFormat("[The White Button #{0}] The {1} blob should have been {2}, instead of {3}.", _moduleId, POSITIONS[i], _targetBlobColors[i], _blobColors[i]);
-                }
-                else
-                {
-                    LeftLeds[4 - (i + 4) % 5].material = OnColors[2];
-                    RightLeds[4 - (i + 4) % 5].material = OnColors[2];
-                }
+                ValueTexts[i].text = "";
+                yield return new WaitForSeconds(0.15f);
             }
-            Debug.LogFormat("[The White Button #{0}] Not all correct colors have been submitted. Strike.", _moduleId);
-            _isStriking = true;
-            yield return new WaitForSeconds(1.5f);
-            _isStriking = false;
+            _isAnimating = false;
         }
     }
+
 #pragma warning disable 0414
-    private readonly string TwitchHelpMessage = "!{0} tap 23 17 5 [tap when the seconds on the timer are these values exactly] | !{0} submit";
+    private readonly string TwitchHelpMessage = "!{0} submit 2 3 1 0 [Hold for 2, 3, 1, and 0 timer ticks.] | !{0} submit 4 [Hold for 4 timer ticks, resets the module.]";
 #pragma warning restore 0414
 
     private IEnumerator ProcessTwitchCommand(string command)
     {
-        if (Regex.IsMatch(command, @"^\s*(submit|hold)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-        {
-            yield return null;
-            WhiteButtonSelectable.OnInteract();
-            yield return new WaitForSeconds(1f);
-            WhiteButtonSelectable.OnInteractEnded();
-            yield return new WaitForSeconds(.1f);
+        var parameters = command.ToUpperInvariant().Split(' ');
+        var m = Regex.Match(parameters[0], @"^\s*submit\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!m.Success)
             yield break;
-        }
-
-        var pieces = command.Trim().ToLowerInvariant().Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-        var skip = pieces[0].EqualsAny("tap", "press", "click", "push") ? 1 : 0;
-        var numbers = new List<int>();
-        foreach (var numPiece in pieces.Skip(skip))
+        var list = new List<int>();
+        for (int i = 1; i < parameters.Count(); i++)
         {
-            int value;
-            if (!int.TryParse(numPiece, out value) || value < 0 || value >= 60)
+            int val;
+            if (!int.TryParse(parameters[i], out val) || val < 0 || val > 4)
                 yield break;
-            numbers.Add(value);
+            list.Add(val);
         }
         yield return null;
-        yield return "waiting music";
-        while (numbers.Count > 0)
+        for (int i = 0; i < list.Count; i++)
         {
-        keepWaiting:
-            var ix = numbers.IndexOf((int)BombInfo.GetTime() % 60);
-            if (ix == -1)
+            WhiteButtonSelectable.OnInteract();
+            int time = (int)BombInfo.GetTime();
+            while (Math.Abs(time - (int)BombInfo.GetTime()) != list[i])
+                yield return null;
+            WhiteButtonSelectable.OnInteractEnded();
+            if (_ignored)
             {
-                yield return "trycancel";
-                goto keepWaiting;
+                yield return "sendtochat The button was held over zero timer ticks for the intial value. Stopping command.";
+                yield break;
             }
-            yield return new[] { WhiteButtonSelectable };
-            numbers.RemoveAt(ix);
         }
+        yield break;
     }
 
     public IEnumerator TwitchHandleForcedSolve()
     {
-        var corrections = new List<int>();
-        for (var blob = 0; blob < 5; blob++)
+        int time = (int)BombInfo.GetTime();
+        if (_initialHold == 3)
         {
-            var curR = _blobColors[blob] / 9;
-            var curG = _blobColors[blob] % 9 / 3;
-            var curB = _blobColors[blob] % 3;
-            var goalR = _targetBlobColors[blob] / 9;
-            var goalG = _targetBlobColors[blob] % 9 / 3;
-            var goalB = _targetBlobColors[blob] % 3;
-
-            if (curR > goalR)
-                corrections.AddRange(Enumerable.Repeat(Enumerable.Range(0, 30).First(i => 4 - (i + 4) % 5 == blob && i % 3 == 0 && i % 2 == 1), curR - goalR));
-            else if (curR < goalR)
-                corrections.AddRange(Enumerable.Repeat(Enumerable.Range(0, 30).First(i => 4 - (i + 4) % 5 == blob && i % 3 == 0 && i % 2 == 0), goalR - curR));
-
-            if (curG > goalG)
-                corrections.AddRange(Enumerable.Repeat(Enumerable.Range(0, 30).First(i => 4 - (i + 4) % 5 == blob && i % 3 == 2 && i % 2 == 1), curG - goalG));
-            else if (curG < goalG)
-                corrections.AddRange(Enumerable.Repeat(Enumerable.Range(0, 30).First(i => 4 - (i + 4) % 5 == blob && i % 3 == 2 && i % 2 == 0), goalG - curG));
-
-            if (curB > goalB)
-                corrections.AddRange(Enumerable.Repeat(Enumerable.Range(0, 30).First(i => 4 - (i + 4) % 5 == blob && i % 3 == 1 && i % 2 == 1), curB - goalB));
-            else if (curB < goalB)
-                corrections.AddRange(Enumerable.Repeat(Enumerable.Range(0, 30).First(i => 4 - (i + 4) % 5 == blob && i % 3 == 1 && i % 2 == 0), goalB - curB));
-        }
-
-        while (corrections.Count > 0)
-        {
-        keepWaiting:
-            var ix = corrections.IndexOf((int)BombInfo.GetTime() % 30);
-            if (ix == -1)
-            {
-                yield return true;
-                goto keepWaiting;
-            }
             WhiteButtonSelectable.OnInteract();
+            time = (int)BombInfo.GetTime();
+            while (time - 4 != (int)BombInfo.GetTime())
+                yield return null;
             WhiteButtonSelectable.OnInteractEnded();
-            yield return new WaitForSeconds(.1f);
-            corrections.RemoveAt(ix);
+            goto next;
         }
-
+        if (_initialHold != null)
+        {
+            int index;
+            for (index = 0; index < _input.Count; index++)
+            {
+                if (_input[index] != _solution[index])
+                {
+                    WhiteButtonSelectable.OnInteract();
+                    time = (int)BombInfo.GetTime();
+                    while (time - 4 != (int)BombInfo.GetTime())
+                        yield return null;
+                    WhiteButtonSelectable.OnInteractEnded();
+                    goto next;
+                }
+            }
+        }
+        next:
         WhiteButtonSelectable.OnInteract();
-        yield return new WaitForSeconds(1f);
+        time = (int)BombInfo.GetTime();
+        while (time - 1 != (int)BombInfo.GetTime())
+            yield return null;
         WhiteButtonSelectable.OnInteractEnded();
-
-        while (!_moduleSolved)
-            yield return true;
+        while (_input.Count < 3)
+        {
+            WhiteButtonSelectable.OnInteract();
+            if (_solution[_input.Count] == 0)
+                WhiteButtonSelectable.OnInteractEnded();
+            else if (_solution[_input.Count] == 1)
+            {
+                while (_holdCount != _initialHold)
+                    yield return null;
+                WhiteButtonSelectable.OnInteractEnded();
+            }
+            else
+            {
+                while (_holdCount <= _initialHold)
+                    yield return null;
+                WhiteButtonSelectable.OnInteractEnded();
+            }
+            yield return null;
+        }
     }
 }
